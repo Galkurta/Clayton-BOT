@@ -105,7 +105,7 @@ class Clayton {
   }
 
   async getPartnerTasks(initData) {
-    const url = "https://tonclayton.fun/api/user/partner/get";
+    const url = "https://tonclayton.fun/api/tasks/partner";
     const headers = { ...this.headers, "Init-Data": initData };
     try {
       const response = await axios.post(url, {}, { headers });
@@ -120,7 +120,7 @@ class Clayton {
   }
 
   async completePartnerTask(initData, taskId) {
-    const url = `https://tonclayton.fun/api/user/partner/complete/${taskId}`;
+    const url = `https://tonclayton.fun/api/user/tasks/complete/${taskId}`;
     const headers = { ...this.headers, "Init-Data": initData };
     try {
       const response = await axios.post(url, {}, { headers });
@@ -135,7 +135,7 @@ class Clayton {
   }
 
   async rewardPartnerTask(initData, taskId) {
-    const url = `https://tonclayton.fun/api/user/partner/reward/${taskId}`;
+    const url = `https://tonclayton.fun/api/tasks/claim${taskId}`;
     const headers = { ...this.headers, "Init-Data": initData };
     try {
       const response = await axios.post(url, {}, { headers });
@@ -306,7 +306,7 @@ class Clayton {
       while (startAttempts < 1 && !gameStarted) {
         try {
           const startGameResponse = await axios.post(
-            `${baseUrl}/game/start-game`,
+            `${baseUrl}/game/start`,
             {},
             { headers }
           );
@@ -347,7 +347,7 @@ class Clayton {
 
         try {
           const saveGameResponse = await axios.post(
-            `${baseUrl}/game/save-tile-game`,
+            `${baseUrl}/game/save-tile`,
             { maxTile: milestone },
             { headers }
           );
@@ -363,7 +363,7 @@ class Clayton {
 
       try {
         const endGameResponse = await axios.post(
-          `${baseUrl}/game/over-game`,
+          `${baseUrl}/game/over`,
           {},
           { headers }
         );
