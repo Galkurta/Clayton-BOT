@@ -25,7 +25,21 @@ class Clayton {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
     };
-    this.firstAccountFarmEndTime = null;
+    this.baseUrl = "https://tonclayton.fun/api";
+  }
+
+  // Helper Methods
+  async makeRequest(endpoint, method = "post", data = {}, initData = "") {
+    const url = endpoint.startsWith("http")
+      ? endpoint
+      : `${this.baseUrl}${endpoint}`;
+    const headers = { ...this.headers, "Init-Data": initData };
+    try {
+      const response = await axios({ method, url, data, headers });
+      return { success: true, data: response.data };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
   }
 
   async countdown(seconds) {
@@ -44,249 +58,269 @@ class Clayton {
     logger.info("");
   }
 
+  // Authentication Methods
   async login(initData) {
-    const url = "https://tonclayton.fun/api/user/login";
-    const headers = { ...this.headers, "Init-Data": initData };
-    try {
-      const response = await axios.post(url, {}, { headers });
-      if (response.status === 200) {
-        return { success: true, data: response.data };
-      } else {
-        return { success: false, error: response.statusText };
-      }
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
+    return this.makeRequest("/user/auth", "post", {}, initData);
   }
 
+  // Farming Methods
   async dailyClaim(initData) {
-    const url = "https://tonclayton.fun/api/user/daily-claim";
-    const headers = { ...this.headers, "Init-Data": initData };
-    try {
-      const response = await axios.post(url, {}, { headers });
-      if (response.status === 200) {
-        return { success: true, data: response.data };
-      } else {
-        return { success: false, error: response.statusText };
-      }
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
+    return this.makeRequest("/user/daily-claim", "post", {}, initData);
   }
 
-  async startFarm(initData) {
-    const url = "https://tonclayton.fun/api/user/start";
-    const headers = { ...this.headers, "Init-Data": initData };
-    try {
-      const response = await axios.post(url, {}, { headers });
-      if (response.status === 200) {
-        return { success: true, data: response.data };
-      } else {
-        return { success: false, error: response.statusText };
-      }
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
+  // Task Methods
+  async getTaskList(taskType, initData) {
+    return this.makeRequest(`/tasks/${taskType}-tasks`, "get", {}, initData);
   }
 
-  async claimFarm(initData) {
-    const url = "https://tonclayton.fun/api/user/claim";
-    const headers = { ...this.headers, "Init-Data": initData };
-    try {
-      const response = await axios.post(url, {}, { headers });
-      if (response.status === 200) {
-        return { success: true, data: response.data };
-      } else {
-        return { success: false, error: response.statusText };
-      }
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
+  async completeTask(initData, taskId) {
+    return this.makeRequest(
+      "/tasks/complete",
+      "post",
+      { task_id: taskId },
+      initData
+    );
   }
 
-  async getPartnerTasks(initData) {
-    const url = "https://tonclayton.fun/api/tasks/partner";
-    const headers = { ...this.headers, "Init-Data": initData };
-    try {
-      const response = await axios.post(url, {}, { headers });
-      if (response.status === 200) {
-        return { success: true, data: response.data };
-      } else {
-        return { success: false, error: response.statusText };
-      }
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
+  async claimTaskReward(initData, taskId) {
+    return this.makeRequest(
+      "/tasks/claim",
+      "post",
+      { task_id: taskId },
+      initData
+    );
   }
 
-  async completePartnerTask(initData, taskId) {
-    const url = `https://tonclayton.fun/api/user/tasks/complete/${taskId}`;
-    const headers = { ...this.headers, "Init-Data": initData };
-    try {
-      const response = await axios.post(url, {}, { headers });
-      if (response.status === 200) {
-        return { success: true, data: response.data };
-      } else {
-        return { success: false, error: response.statusText };
-      }
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async rewardPartnerTask(initData, taskId) {
-    const url = `https://tonclayton.fun/api/tasks/claim${taskId}`;
-    const headers = { ...this.headers, "Init-Data": initData };
-    try {
-      const response = await axios.post(url, {}, { headers });
-      if (response.status === 200) {
-        return { success: true, data: response.data };
-      } else {
-        return { success: false, error: response.statusText };
-      }
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  }
-
-  async handlePartnerTasks(initData) {
-    logger.info("Checking tasks");
-    const tasksResult = await this.getPartnerTasks(initData);
+  async handleTasks(taskType, initData) {
+    logger.info(`Checking ${taskType} tasks`);
+    const tasksResult = await this.getTaskList(taskType, initData);
     if (tasksResult.success) {
       const uncompletedTasks = tasksResult.data.filter(
-        (task) => !task.is_completed
+        (task) => !task.is_completed && !task.is_claimed
       );
       for (const task of uncompletedTasks) {
-        logger.info(`Performing task | ${task.task_name}`);
-        const completeResult = await this.completePartnerTask(
-          initData,
-          task.task_id
-        );
+        logger.info(`Performing ${taskType} task | ${task.task.title}`);
+        const completeResult = await this.completeTask(initData, task.task_id);
         if (completeResult.success) {
-          const rewardResult = await this.rewardPartnerTask(
+          const rewardResult = await this.claimTaskReward(
             initData,
             task.task_id
           );
           if (rewardResult.success) {
-            logger.info(`Successfully completed task | ${task.task_name}`);
+            logger.info(
+              `Successfully completed ${taskType} task | ${task.task.title} | Received ${rewardResult.data.reward_tokens} CL`
+            );
           } else {
             logger.error(
-              `Unable to claim reward for task | ${task.task_name} | ${
-                rewardResult.error || "Unknown error"
-              }`
+              `Unable to claim reward for ${taskType} task | ${
+                task.task.title
+              } | ${rewardResult.error || "Unknown error"}`
             );
           }
         } else {
           logger.error(
-            `Unable to complete task | ${task.task_name} | ${
+            `Unable to complete ${taskType} task | ${task.task.title} | ${
               completeResult.error || "Unknown error"
             }`
           );
         }
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.random() * 5000 + 2000)
+        );
       }
     } else {
       logger.error(
-        `Unable to get partner task list | ${
+        `Unable to get ${taskType} task list | ${
           tasksResult.error || "Unknown error"
         }`
       );
     }
   }
 
+  async handleAllTasks(initData) {
+    const taskTypes = ["default", "partner", "daily", "super"];
+    for (const taskType of taskTypes) {
+      await this.handleTasks(taskType, initData);
+    }
+    await this.handleTwitterTask(initData);
+    await this.handleBotTask(initData);
+  }
+
   async handleTwitterTask(initData) {
-    const checkUrl = "https://tonclayton.fun/api/user/task-twitter";
-    const claimUrl = "https://tonclayton.fun/api/user/task-twitter-claim";
-    const headers = { ...this.headers, "Init-Data": initData };
-
-    try {
-      const checkResponse = await axios.post(checkUrl, {}, { headers });
-
-      if (checkResponse.data.claimed === false) {
-        const claimResponse = await axios.post(claimUrl, {}, { headers });
-
-        if (claimResponse.data.message === "Task status updated") {
-          logger.info("Successfully completed Twitter task");
-        } else {
-          logger.error("Unable to complete Twitter task");
-        }
+    logger.info("Checking Twitter task");
+    const checkResult = await this.makeRequest(
+      "/user/task-twitter",
+      "post",
+      {},
+      initData
+    );
+    if (checkResult.success && !checkResult.data.claimed) {
+      const claimResult = await this.makeRequest(
+        "/user/task-twitter-claim",
+        "post",
+        {},
+        initData
+      );
+      if (
+        claimResult.success &&
+        claimResult.data.message === "Task status updated"
+      ) {
+        logger.info("Successfully completed Twitter task");
+      } else {
+        logger.error("Unable to complete Twitter task");
       }
-    } catch (error) {
-      logger.error(`Error processing Twitter task: ${error.message}`);
     }
   }
 
   async handleBotTask(initData) {
-    const checkUrl = "https://tonclayton.fun/api/user/task-bot";
-    const claimUrl = "https://tonclayton.fun/api/user/task-bot-claim";
-    const headers = { ...this.headers, "Init-Data": initData };
-
-    try {
-      const checkResponse = await axios.post(checkUrl, {}, { headers });
-
-      if (
-        checkResponse.data.bot === true &&
-        checkResponse.data.claim === false
-      ) {
-        const claimResponse = await axios.post(claimUrl, {}, { headers });
-
-        if (claimResponse.data.claimed) {
-          logger.info(
-            `Successfully completed bot usage task. Received ${claimResponse.data.claimed} CL`
-          );
-        } else {
-          logger.error("Unable to complete bot usage task");
-        }
-      }
-    } catch (error) {
-      logger.error(`Error processing bot usage task: ${error.message}`);
-    }
-  }
-
-  async handleDailyTasks(initData) {
-    const dailyTasksUrl = "https://tonclayton.fun/api/user/daily-tasks";
-    const headers = { ...this.headers, "Init-Data": initData };
-
-    try {
-      const response = await axios.post(dailyTasksUrl, {}, { headers });
-
-      if (response.status === 200) {
-        const uncompletedTasks = response.data.filter(
-          (task) => !task.is_completed
+    logger.info("Checking bot usage task");
+    const checkResult = await this.makeRequest(
+      "/user/task-bot",
+      "post",
+      {},
+      initData
+    );
+    if (
+      checkResult.success &&
+      checkResult.data.bot &&
+      !checkResult.data.claim
+    ) {
+      const claimResult = await this.makeRequest(
+        "/user/task-bot-claim",
+        "post",
+        {},
+        initData
+      );
+      if (claimResult.success && claimResult.data.claimed) {
+        logger.info(
+          `Successfully completed bot usage task | Received ${claimResult.data.claimed} CL`
         );
-
-        for (const task of uncompletedTasks) {
-          const completeUrl = `https://tonclayton.fun/api/user/daily-task/${task.id}/complete`;
-          const claimUrl = `https://tonclayton.fun/api/user/daily-task/${task.id}/claim`;
-
-          try {
-            await axios.post(completeUrl, {}, { headers });
-
-            const claimResponse = await axios.post(claimUrl, {}, { headers });
-
-            if (claimResponse.data.message === "Reward claimed successfully") {
-              logger.info(
-                `Successfully completed ${task.task_type} task | Received ${claimResponse.data.reward} CL`
-              );
-            } else {
-              logger.error(`Unable to claim reward for ${task.task_type} task`);
-            }
-          } catch (error) {
-            // Error handling removed as per request
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 1000));
-        }
+      } else {
+        logger.error("Unable to complete bot usage task");
       }
-    } catch (error) {
-      // Error handling removed as per request
     }
   }
 
-  async playGame(initData) {
-    const headers = { ...this.headers, "Init-Data": initData };
-    const baseUrl = "https://tonclayton.fun/api";
+  // Game Methods
+  async play2048(initData) {
+    logger.info("Starting 2048 game");
+    const startGameResult = await this.makeRequest(
+      "/game/start",
+      "post",
+      {},
+      initData
+    );
+    if (
+      startGameResult.success &&
+      startGameResult.data.message === "Game started successfully"
+    ) {
+      logger.info("2048 game started successfully");
+      const fixedMilestones = [4, 8, 16, 32, 64, 128, 256, 512, 1024];
+      const allMilestones = [...fixedMilestones].sort((a, b) => a - b);
+      const gameEndTime = Date.now() + 150000;
 
+      for (const milestone of allMilestones) {
+        if (Date.now() >= gameEndTime) break;
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.random() * 10000 + 5000)
+        );
+        const saveGameResult = await this.makeRequest(
+          "/game/save-tile",
+          "post",
+          { maxTile: milestone },
+          initData
+        );
+        if (
+          saveGameResult.success &&
+          saveGameResult.data.message === "MaxTile saved successfully"
+        ) {
+          logger.info(`Reached tile ${milestone}`);
+        }
+      }
+
+      const endGameResult = await this.makeRequest(
+        "/game/over",
+        "post",
+        { multiplier: 1 },
+        initData
+      );
+      if (endGameResult.success) {
+        const reward = endGameResult.data;
+        logger.info(
+          `2048 game ended successfully | Received ${reward.earn} CL | ${reward.xp_earned} XP`
+        );
+      } else {
+        logger.error(
+          `Error ending 2048 game | ${endGameResult.error || "Unknown error"}`
+        );
+      }
+    } else {
+      logger.error("Unable to start 2048 game");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+
+  async playStack(initData) {
+    logger.info("Starting Stack game");
+    const startGameResult = await this.makeRequest(
+      "/stack/start-game",
+      "post",
+      {},
+      initData
+    );
+    if (startGameResult.success) {
+      logger.info("Stack game started successfully");
+      const gameEndTime = Date.now() + 120000;
+      const scores = [10, 20, 30, 40, 50, 60, 70, 80, 90];
+      let currentScoreIndex = 0;
+
+      while (Date.now() < gameEndTime && currentScoreIndex < scores.length) {
+        const score = scores[currentScoreIndex];
+        const updateResult = await this.makeRequest(
+          "/stack/update-game",
+          "post",
+          { score },
+          initData
+        );
+        if (updateResult.success) {
+          logger.info(`Updated Stack score: ${score}`);
+          currentScoreIndex++;
+        } else {
+          logger.error(
+            `Error updating Stack score: ${
+              updateResult.error || "Unknown error"
+            }`
+          );
+        }
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.random() * 10000 + 5000)
+        );
+      }
+
+      const finalScore = scores[currentScoreIndex - 1] || 90;
+      const endGameResult = await this.makeRequest(
+        "/stack/end-game",
+        "post",
+        { score: finalScore, multiplier: 1 },
+        initData
+      );
+      if (endGameResult.success) {
+        const reward = endGameResult.data;
+        logger.info(
+          `Stack game ended successfully | Received ${reward.earn} CL | ${reward.xp_earned} XP`
+        );
+      } else {
+        logger.error(
+          `Error ending Stack game: ${endGameResult.error || "Unknown error"}`
+        );
+      }
+    } else {
+      logger.error("Unable to start Stack game");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+  }
+
+  async playGames(initData) {
     while (true) {
       const loginResult = await this.login(initData);
       if (!loginResult.success) {
@@ -294,88 +328,74 @@ class Clayton {
         return;
       }
 
-      const tickets = loginResult.data.user.tickets;
+      const tickets = loginResult.data.user.daily_attempts;
       if (tickets <= 0) {
         logger.info("No more tickets. Stopping game play.");
         return;
       }
 
-      let startAttempts = 0;
-      let gameStarted = false;
+      logger.info(`Current tickets: ${tickets}`);
 
-      while (startAttempts < 1 && !gameStarted) {
-        try {
-          const startGameResponse = await axios.post(
-            `${baseUrl}/game/start`,
-            {},
-            { headers }
-          );
-          if (startGameResponse.data.message === "Game started successfully") {
-            logger.info("Game started successfully");
-            gameStarted = true;
-          } else {
-            logger.error("Unable to start the game");
-            startAttempts++;
-          }
-        } catch (error) {
-          logger.error(`Error starting game: ${error.message}`);
-          startAttempts++;
+      if (tickets >= 2) {
+        await this.play2048(initData);
+        if (tickets > 1) {
+          await this.playStack(initData);
         }
-
-        if (!gameStarted && startAttempts < 3) {
-          await new Promise((resolve) => setTimeout(resolve, 5000));
-        }
+      } else {
+        await this.play2048(initData);
       }
+    }
+  }
 
-      if (!gameStarted) {
+  // Main Process
+  async processAccount(initData, accountIndex) {
+    const userData = JSON.parse(
+      decodeURIComponent(initData.split("user=")[1].split("&")[0])
+    );
+    const firstName = userData.first_name;
+
+    logger.info(`Account ${accountIndex + 1} | ${firstName}`);
+    logger.info(`Logging into account`);
+
+    const loginResult = await this.login(initData);
+    if (!loginResult.success) {
+      logger.error(`Login failed! ${loginResult.error}`);
+      return;
+    }
+
+    logger.info("Login successful!");
+    const userInfo = loginResult.data.user;
+    logger.info(`CL Balance: ${userInfo.tokens}`);
+    logger.info(`Tickets: ${userInfo.daily_attempts}`);
+
+    // Daily Claim
+    if (loginResult.data.dailyReward.can_claim_today) {
+      logger.info("Claiming daily reward");
+      const claimResult = await this.dailyClaim(initData);
+      if (
+        claimResult.success &&
+        claimResult.data.message === "daily reward claimed successfully"
+      ) {
+        logger.info("Daily check-in successful!");
+      } else {
         logger.error(
-          "Unable to start the game after 3 attempts. Stopping game play."
+          `Unable to claim daily reward: ${
+            claimResult.error || "Unknown error"
+          }`
         );
-        return;
       }
+    } else {
+      logger.warn("You've already checked in today.");
+    }
 
-      const fixedMilestones = [4, 8, 16, 32, 64, 128, 256, 512, 1024];
-      const allMilestones = [...fixedMilestones].sort((a, b) => a - b);
-      const gameEndTime = Date.now() + 150000;
+    // Tasks
+    await this.handleAllTasks(initData);
 
-      for (const milestone of allMilestones) {
-        if (Date.now() >= gameEndTime) break;
-
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.random() * 10000 + 5000)
-        );
-
-        try {
-          const saveGameResponse = await axios.post(
-            `${baseUrl}/game/save-tile`,
-            { maxTile: milestone },
-            { headers }
-          );
-          if (saveGameResponse.data.message === "MaxTile saved successfully") {
-            logger.info(`Reached tile ${milestone}`);
-          } else {
-            logger.error(`Failed to save tile ${milestone}`);
-          }
-        } catch (error) {
-          logger.error(`Error saving game state: ${error.message}`);
-        }
-      }
-
-      try {
-        const endGameResponse = await axios.post(
-          `${baseUrl}/game/over`,
-          {},
-          { headers }
-        );
-        const reward = endGameResponse.data;
-        logger.info(
-          `Game ended successfully. Received ${reward.earn} CL and ${reward.xp_earned} XP`
-        );
-      } catch (error) {
-        logger.error(`Error ending game: ${error.message}`);
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+    // Games
+    if (userInfo.daily_attempts > 0) {
+      await this.playGames(initData);
+    } else {
+      logger.info(`No tickets left to play games`);
     }
   }
 
@@ -392,146 +412,18 @@ class Clayton {
 
       for (let i = 0; i < data.length; i++) {
         const initData = data[i];
-        const userData = JSON.parse(
-          decodeURIComponent(initData.split("user=")[1].split("&")[0])
-        );
-        const firstName = userData.first_name;
-
-        logger.info(`Account ${i + 1} | ${firstName}`);
-
-        logger.info(`Logging into account`);
-        const loginResult = await this.login(initData);
-        if (loginResult.success) {
-          logger.info("Login successful!");
-          const userInfo = loginResult.data.user;
-          logger.info(`CL Balance: ${userInfo.tokens}`);
-          logger.info(`Tickets: ${userInfo.daily_attempts}`);
-
-          if (loginResult.data.dailyReward.can_claim_today) {
-            logger.info("Claiming daily reward...");
-            const claimResult = await this.dailyClaim(initData);
-            if (
-              claimResult.success &&
-              claimResult.data.message === "daily reward claimed successfully"
-            ) {
-              logger.info("Daily check-in successful!");
-            } else {
-              logger.error(
-                `Unable to claim daily reward: ${
-                  claimResult.error || "Unknown error"
-                }`
-              );
-            }
-          } else {
-            logger.warn("You've already checked in today.");
-          }
-
-          if (!userInfo.active_farm) {
-            logger.info("Starting farm");
-            const startResult = await this.startFarm(initData);
-            if (startResult.success) {
-              const finishTime = DateTime.fromISO(
-                startResult.data.start_time
-              ).plus({ hours: 6 });
-              logger.info(
-                `Farm started. Completion time: ${finishTime.toFormat(
-                  "dd/MM/yyyy HH:mm:ss"
-                )}`
-              );
-              if (i === 0) {
-                this.firstAccountFarmEndTime = finishTime;
-              }
-            } else {
-              logger.error(
-                `Unable to start farm: ${startResult.error || "Unknown error"}`
-              );
-            }
-          } else {
-            if (!userInfo.can_claim) {
-              const finishTime = DateTime.fromISO(userInfo.start_time).plus({
-                hours: 6,
-              });
-              logger.info(
-                `Farm is active | Completion time: ${finishTime.toFormat(
-                  "dd/MM/yyyy HH:mm:ss"
-                )}`
-              );
-              if (i === 0) {
-                this.firstAccountFarmEndTime = finishTime;
-              }
-            } else {
-              logger.info("Claiming farm reward...");
-              const claimResult = await this.claimFarm(initData);
-              if (claimResult.success) {
-                logger.info(
-                  `Claim successful | ${claimResult.data.claim} CL | ${claimResult.data.xp_earned} XP | Balance: ${claimResult.data.tokens}`
-                );
-
-                logger.info("Starting new farm...");
-                const startResult = await this.startFarm(initData);
-                if (startResult.success) {
-                  const finishTime = DateTime.fromISO(
-                    startResult.data.start_time
-                  ).plus({ hours: 6 });
-                  logger.info(
-                    `New farm started. Completion time: ${finishTime.toFormat(
-                      "dd/MM/yyyy HH:mm:ss"
-                    )}`
-                  );
-                  if (i === 0) {
-                    this.firstAccountFarmEndTime = finishTime;
-                  }
-                } else {
-                  logger.error(
-                    `Unable to start new farm: ${
-                      startResult.error || "Unknown error"
-                    }`
-                  );
-                }
-              } else {
-                logger.error(
-                  `Unable to claim farm reward: ${
-                    claimResult.error || "Unknown error"
-                  }`
-                );
-              }
-            }
-          }
-
-          await new Promise((resolve) => setTimeout(resolve, 3000));
-          await this.handlePartnerTasks(initData);
-          await this.handleTwitterTask(initData);
-          await this.handleBotTask(initData);
-          await this.handleDailyTasks(initData);
-          if (userInfo.daily_attempts > 0) {
-            await this.playGame(initData);
-          } else {
-            logger.info(`No tickets left to play the game`);
-          }
-        } else {
-          logger.error(`Login failed! ${loginResult.error}`);
-        }
-
+        await this.processAccount(initData, i);
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
 
-      if (this.firstAccountFarmEndTime) {
-        const now = DateTime.now();
-        const waitTime = this.firstAccountFarmEndTime.diff(now).as("seconds");
-        if (waitTime > 0) {
-          logger.info(`Waiting until the first account's farm is completed...`);
-          await this.countdown(Math.ceil(waitTime));
-        }
-      } else {
-        logger.warn(
-          `No information about the first account's farm completion time. Waiting 6 hours...`
-        );
-        await this.countdown(6 * 60 * 60);
-      }
+      // Wait for 24 hours before starting the next cycle
+      logger.info("Waiting 24 hours before starting the next cycle");
+      await this.countdown(24 * 60 * 60);
     }
   }
 }
 
+// Run the script
 const client = new Clayton();
 client.main().catch((err) => {
   logger.error(err.message);
