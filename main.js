@@ -5,6 +5,7 @@ const readline = require("readline");
 require("luxon");
 const printBanner = require("./config/banner.js");
 const logger = require("./config/logger.js");
+const colors = require("./config/colors");
 
 class Clayton {
   constructor() {
@@ -61,13 +62,21 @@ class Clayton {
         return { success: true, data: response.data };
       } catch (error) {
         const statusCode = error.response?.status;
-        logger.error(`API Error: ${error.message}`);
-        logger.error(`Status Code: ${statusCode}`);
+        logger.error(`${colors.red}API Error: ${error.message}${colors.reset}`);
+        logger.error(`${colors.red}Status Code: ${statusCode}${colors.reset}`);
         if (error.response?.data) {
-          logger.error(`Response Data: ${JSON.stringify(error.response.data)}`);
+          logger.error(
+            `${colors.red}Response Data: ${JSON.stringify(
+              error.response.data
+            )}${colors.reset}`
+          );
         }
         if (attempt < retries - 1 && statusCode >= 500) {
-          logger.warn(`Retrying request... Attempt ${attempt + 1}`);
+          logger.warn(
+            `${colors.yellow}Retrying request... Attempt ${attempt + 1}${
+              colors.reset
+            }`
+          );
           await this.wait(5000);
         } else {
           return {
@@ -95,7 +104,7 @@ class Clayton {
       const secs = String(i % 60).padStart(2, "0");
       readline.cursorTo(process.stdout, 0);
       process.stdout.write(
-        `Waiting ${hours}:${minutes}:${secs} to continue the loop`
+        `${colors.yellow}Waiting ${hours}:${minutes}:${secs} to continue the loop${colors.reset}`
       );
       await this.wait(1000);
     }
@@ -178,16 +187,16 @@ class Clayton {
 
       if (!startResult.success || !startResult.data.session_id) {
         logger.error(
-          `Failed to start ${gameName} game: ${
+          `${colors.red}Failed to start ${gameName} game: ${
             startResult.error || "No session ID received"
-          }`
+          }${colors.reset}`
         );
         return startResult;
       }
 
       const sessionId = startResult.data.session_id;
       logger.info(
-        `${gameName} game started successfully with session: ${sessionId}`
+        `${colors.green}${gameName} game started successfully with session: ${colors.bright}${sessionId}${colors.reset}`
       );
 
       await this.wait(2000);
@@ -199,13 +208,17 @@ class Clayton {
       );
 
       if (!gameResult.success) {
-        logger.error(`Game session ${sessionId} failed: ${gameResult.error}`);
+        logger.error(
+          `${colors.red}Game session ${sessionId} failed: ${gameResult.error}${colors.reset}`
+        );
         return gameResult;
       }
 
       return gameResult;
     } catch (error) {
-      logger.error(`Unexpected error in playGame: ${error.message}`);
+      logger.error(
+        `${colors.red}Unexpected error in playGame: ${error.message}${colors.reset}`
+      );
       return { success: false, error: error.message };
     }
   }
@@ -214,14 +227,27 @@ class Clayton {
     try {
       const tileSequence = [2, 4, 8, 16, 32, 64, 128, 256];
       let lastSuccessfulTile = 0;
+      let lastSuccessfulTime = 0;
 
       for (let i = 0; i < tileSequence.length; i++) {
         const currentTile = tileSequence[i];
         logger.info(
-          `${gameName} game progress: ${i + 1}/${tileSequence.length}`
+          `${colors.cyan}${gameName} game progress: ${colors.bright}${i + 1}/${
+            tileSequence.length
+          }${colors.reset}`
         );
 
-        await this.wait(this.getRandomNumber(3000, 5000));
+        const currentTime = Date.now();
+        if (lastSuccessfulTime > 0) {
+          const timeSinceLastSuccess = currentTime - lastSuccessfulTime;
+          if (timeSinceLastSuccess < 5000) {
+            const additionalDelay = 5000 - timeSinceLastSuccess;
+            await this.wait(additionalDelay);
+          }
+        }
+
+        // Random delay between saves
+        await this.wait(this.getRandomNumber(4000, 7000));
 
         const saveResult = await this.safeRequest(
           api,
@@ -234,54 +260,110 @@ class Clayton {
         );
 
         if (saveResult.success) {
-          logger.info(`Tile ${currentTile} saved successfully`);
-          lastSuccessfulTile = currentTile;
-        } else {
-          logger.error(
-            `Failed to save tile ${currentTile} - Error: ${saveResult.error}`
+          logger.info(
+            `${colors.green}Tile ${currentTile} saved successfully${colors.reset}`
           );
-          logger.error(`Last successful tile was: ${lastSuccessfulTile}`);
-          break;
+          lastSuccessfulTile = currentTile;
+          lastSuccessfulTime = Date.now();
+        } else {
+          const errorMessage = saveResult.details?.error || saveResult.error;
+          if (errorMessage?.includes("SQLSTATE 42P10")) {
+            logger.error(
+              `${colors.red}Database conflict detected. Waiting for resolution...${colors.reset}`
+            );
+            await this.wait(10000); // Wait 10 seconds on database conflict
+            continue; // Try the same tile again
+          }
+
+          logger.error(
+            `${colors.red}Failed to save tile ${currentTile} - Error: ${errorMessage}${colors.reset}`
+          );
+          logger.error(
+            `${colors.red}Last successful tile was: ${lastSuccessfulTile}${colors.reset}`
+          );
+
+          // On error, wait longer before trying next tile
+          await this.wait(8000);
+          continue; // Try to continue with next tile instead of breaking
         }
       }
 
-      await this.wait(2000);
+      // Additional delay before ending game
+      await this.wait(5000);
 
-      logger.info(
-        `${gameName} game finished with session: ${sessionId}, maxTile: ${lastSuccessfulTile}`
-      );
-      const gameOverResult = await this.safeRequest(
-        api,
-        "post",
-        "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/game/over",
-        {
-          session_id: sessionId,
-          multiplier: 1,
-          maxTile: lastSuccessfulTile,
+      // Try to end game multiple times if needed
+      let endGameAttempts = 0;
+      let gameOverResult;
+
+      while (endGameAttempts < 3) {
+        logger.info(
+          `${colors.cyan}${gameName} game finished with session: ${sessionId}, maxTile: ${lastSuccessfulTile}${colors.reset}`
+        );
+
+        gameOverResult = await this.safeRequest(
+          api,
+          "post",
+          "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/game/over",
+          {
+            session_id: sessionId,
+            multiplier: 1,
+            maxTile: lastSuccessfulTile,
+          }
+        );
+
+        if (gameOverResult.success) {
+          break;
         }
-      );
+
+        logger.warn(
+          `${colors.yellow}Failed to end game, attempt ${
+            endGameAttempts + 1
+          }/3. Waiting before retry...${colors.reset}`
+        );
+        await this.wait(8000);
+        endGameAttempts++;
+      }
 
       if (!gameOverResult.success) {
         logger.error(
-          `Failed to properly end game session ${sessionId}: ${gameOverResult.error}`
+          `${colors.red}Failed to properly end game session after all attempts${colors.reset}`
         );
+        return gameOverResult;
       }
 
       if (gameOverResult.data) {
         const { earn, xp_earned, level, token_reward, attempts_reward } =
           gameOverResult.data;
-        logger.info(`Game Rewards:`);
-        logger.info(`> Earnings: ${earn || 0} CL`);
-        logger.info(`> XP Earned: ${xp_earned || 0}`);
-        logger.info(`> Level: ${level || 0}`);
-        logger.info(`> Token Reward: ${token_reward || 0}`);
-        logger.info(`> Attempts Reward: ${attempts_reward || 0}`);
+        logger.info(`${colors.cyan}Game Rewards:${colors.reset}`);
+        logger.info(
+          `${colors.green}> Earnings: ${colors.bright}${earn || 0} CL${
+            colors.reset
+          }`
+        );
+        logger.info(
+          `${colors.green}> XP Earned: ${colors.bright}${xp_earned || 0}${
+            colors.reset
+          }`
+        );
+        logger.info(
+          `${colors.green}> Level: ${colors.bright}${level || 0}${colors.reset}`
+        );
+        logger.info(
+          `${colors.green}> Token Reward: ${colors.bright}${token_reward || 0}${
+            colors.reset
+          }`
+        );
+        logger.info(
+          `${colors.green}> Attempts Reward: ${colors.bright}${
+            attempts_reward || 0
+          }${colors.reset}`
+        );
       }
 
       return gameOverResult;
     } catch (error) {
       logger.error(
-        `Unexpected error in playGameWithProgress: ${error.message}`
+        `${colors.red}Unexpected error in playGameWithProgress: ${error.message}${colors.reset}`
       );
       return { success: false, error: error.message };
     }
@@ -298,23 +380,25 @@ class Clayton {
 
       if (!startResult.success || !startResult.data.session_id) {
         logger.error(
-          `Failed to start ${gameName} game: ${
+          `${colors.red}Failed to start ${gameName} game: ${
             startResult.error || "No session ID received"
-          }`
+          }${colors.reset}`
         );
         return startResult;
       }
 
       const sessionId = startResult.data.session_id;
       logger.info(
-        `${gameName} game started successfully with session: ${sessionId}`
+        `${colors.green}${gameName} game started successfully with session: ${colors.bright}${sessionId}${colors.reset}`
       );
 
-      await this.wait(2000);
+      await this.wait(3000); // Wait before starting game progress
 
       return this.playStackGameWithProgress(api, gameName);
     } catch (error) {
-      logger.error(`Unexpected error in playStackGame: ${error.message}`);
+      logger.error(
+        `${colors.red}Unexpected error in playStackGame: ${error.message}${colors.reset}`
+      );
       return { success: false, error: error.message };
     }
   }
@@ -323,74 +407,162 @@ class Clayton {
     try {
       const scoreSequence = [10, 20, 30, 40, 50, 60, 70, 80, 90];
       let lastSuccessfulScore = 0;
+      let lastSuccessfulTime = 0;
 
       for (let i = 0; i < scoreSequence.length; i++) {
         const currentScore = scoreSequence[i];
         logger.info(
-          `${gameName} game progress: ${i + 1}/${
+          `${colors.cyan}${gameName} game progress: ${colors.bright}${i + 1}/${
             scoreSequence.length
-          } (Score: ${currentScore})`
+          }${colors.cyan} (Score: ${colors.bright}${currentScore}${
+            colors.cyan
+          })${colors.reset}`
         );
 
-        await this.wait(this.getRandomNumber(3000, 5000));
-
-        const updateResult = await this.safeRequest(
-          api,
-          "post",
-          "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/stack/update-game",
-          {
-            score: currentScore,
+        const currentTime = Date.now();
+        if (lastSuccessfulTime > 0) {
+          const timeSinceLastSuccess = currentTime - lastSuccessfulTime;
+          if (timeSinceLastSuccess < 5000) {
+            const additionalDelay = 5000 - timeSinceLastSuccess;
+            await this.wait(additionalDelay);
           }
-        );
+        }
 
-        if (updateResult.success) {
-          logger.info(`Score ${currentScore} updated successfully`);
-          lastSuccessfulScore = currentScore;
-        } else {
-          logger.error(
-            `Failed to update score ${currentScore} - Error: ${updateResult.error}`
+        // Random delay between score updates
+        await this.wait(this.getRandomNumber(4000, 7000));
+
+        let updateSuccess = false;
+        let updateAttempts = 0;
+
+        while (!updateSuccess && updateAttempts < 3) {
+          const updateResult = await this.safeRequest(
+            api,
+            "post",
+            "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/stack/update-game",
+            {
+              score: currentScore,
+            }
           );
-          logger.error(`Last successful score was: ${lastSuccessfulScore}`);
+
+          if (updateResult.success) {
+            logger.info(
+              `${colors.green}Score ${currentScore} updated successfully${colors.reset}`
+            );
+            lastSuccessfulScore = currentScore;
+            lastSuccessfulTime = Date.now();
+            updateSuccess = true;
+          } else {
+            updateAttempts++;
+            const errorMessage =
+              updateResult.details?.error || updateResult.error;
+
+            if (errorMessage?.includes("SQLSTATE 42P10")) {
+              logger.warn(
+                `${colors.yellow}Database conflict detected. Waiting before retry... (Attempt ${updateAttempts}/3)${colors.reset}`
+              );
+              await this.wait(8000); // Longer wait on database conflict
+              continue;
+            }
+
+            logger.error(
+              `${colors.red}Failed to update score ${currentScore} - Error: ${errorMessage} (Attempt ${updateAttempts}/3)${colors.reset}`
+            );
+
+            if (updateAttempts < 3) {
+              logger.info(
+                `${colors.yellow}Retrying after delay...${colors.reset}`
+              );
+              await this.wait(6000);
+            } else {
+              logger.error(
+                `${colors.red}Last successful score was: ${lastSuccessfulScore}${colors.reset}`
+              );
+              break;
+            }
+          }
+        }
+
+        if (!updateSuccess) {
+          logger.error(
+            `${colors.red}Failed to update score after all attempts${colors.reset}`
+          );
           break;
         }
       }
 
-      await this.wait(2000);
+      // Additional delay before ending game
+      await this.wait(5000);
 
-      logger.info(
-        `${gameName} game finished with final score: ${lastSuccessfulScore}`
-      );
-      const endGameResult = await this.safeRequest(
-        api,
-        "post",
-        "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/stack/en-game",
-        {
-          score: lastSuccessfulScore,
-          multiplier: 1,
+      // Try to end game multiple times if needed
+      let endGameAttempts = 0;
+      let endGameResult;
+
+      while (endGameAttempts < 3) {
+        logger.info(
+          `${colors.cyan}${gameName} game finished with final score: ${colors.bright}${lastSuccessfulScore}${colors.reset}`
+        );
+
+        endGameResult = await this.safeRequest(
+          api,
+          "post",
+          "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/stack/en-game",
+          {
+            score: lastSuccessfulScore,
+            multiplier: 1,
+          }
+        );
+
+        if (endGameResult.success) {
+          break;
         }
-      );
+
+        endGameAttempts++;
+        logger.warn(
+          `${colors.yellow}Failed to end game, attempt ${endGameAttempts}/3. Waiting before retry...${colors.reset}`
+        );
+        await this.wait(8000);
+      }
 
       if (!endGameResult.success) {
-        logger.error(`Failed to end Stack game: ${endGameResult.error}`);
+        logger.error(
+          `${colors.red}Failed to end Stack game after all attempts: ${endGameResult.error}${colors.reset}`
+        );
         return endGameResult;
       }
 
-      // Log rewards
       if (endGameResult.data) {
         const { earn, xp_earned, level, token_reward, attempts_reward } =
           endGameResult.data;
-        logger.info(`Stack Game Rewards:`);
-        logger.info(`> Earnings: ${earn || 0} CL`);
-        logger.info(`> XP Earned: ${xp_earned || 0}`);
-        logger.info(`> Level: ${level || 0}`);
-        logger.info(`> Token Reward: ${token_reward || 0}`);
-        logger.info(`> Attempts Reward: ${attempts_reward || 0}`);
+        logger.info(`${colors.cyan}Stack Game Rewards:${colors.reset}`);
+        logger.info(
+          `${colors.green}> Earnings: ${colors.bright}${earn || 0} CL${
+            colors.reset
+          }`
+        );
+        logger.info(
+          `${colors.green}> XP Earned: ${colors.bright}${xp_earned || 0}${
+            colors.reset
+          }`
+        );
+        logger.info(
+          `${colors.green}> Level: ${colors.bright}${level || 0}${colors.reset}`
+        );
+        logger.info(
+          `${colors.green}> Token Reward: ${colors.bright}${token_reward || 0}${
+            colors.reset
+          }`
+        );
+        logger.info(
+          `${colors.green}> Attempts Reward: ${colors.bright}${
+            attempts_reward || 0
+          }${colors.reset}`
+        );
       }
 
       return endGameResult;
     } catch (error) {
       logger.error(
-        `Unexpected error in playStackGameWithProgress: ${error.message}`
+        `${colors.red}Unexpected error in playStackGameWithProgress: ${error.message}${colors.reset}`
       );
       return { success: false, error: error.message };
     }
@@ -398,11 +570,13 @@ class Clayton {
 
   // Task Methods
   async processTasks(api, taskGetter, taskType) {
-    logger.info(`Fetching ${taskType} tasks...`);
+    logger.info(`${colors.cyan}Fetching ${taskType} tasks...${colors.reset}`);
 
     const tasksResult = await taskGetter(api);
     if (!tasksResult.success) {
-      logger.error(`Failed to fetch ${taskType} | ${tasksResult.error}`);
+      logger.error(
+        `${colors.red}Failed to fetch ${taskType} | ${tasksResult.error}${colors.reset}`
+      );
       return;
     }
 
@@ -416,16 +590,22 @@ class Clayton {
         }
 
         if (!is_completed && !is_claimed) {
-          logger.info(`Completing ${taskType} | ${taskDetails.title}`);
+          logger.info(
+            `${colors.cyan}Completing ${taskType} | ${colors.bright}${taskDetails.title}${colors.reset}`
+          );
           const completeResult = await this.completeTask(api, task_id);
           if (completeResult.success) {
-            logger.info(completeResult.data.message);
+            logger.info(
+              `${colors.green}${completeResult.data.message}${colors.reset}`
+            );
           } else {
-            logger.error(`Failed to complete task: ${completeResult.error}`);
+            logger.error(
+              `${colors.red}Failed to complete task: ${completeResult.error}${colors.reset}`
+            );
           }
         } else {
           logger.info(
-            `${taskType} task already completed | ${taskDetails.title}`
+            `${colors.yellow}${taskType} task already completed | ${taskDetails.title}${colors.reset}`
           );
         }
       }
@@ -438,24 +618,32 @@ class Clayton {
 
           if (is_completed && !is_claimed) {
             logger.info(
-              `Claiming reward for ${taskType} | ${taskDetails.title}`
+              `${colors.cyan}Claiming reward for ${taskType} | ${colors.bright}${taskDetails.title}${colors.reset}`
             );
             const claimResult = await this.claimTaskReward(api, task_id);
             if (claimResult.success) {
-              logger.info(claimResult.data.message);
-              logger.info(`Reward received: ${claimResult.data.reward_tokens}`);
+              logger.info(
+                `${colors.green}${claimResult.data.message}${colors.reset}`
+              );
+              logger.info(
+                `${colors.green}Reward received: ${colors.bright}${claimResult.data.reward_tokens}${colors.reset}`
+              );
             } else {
-              logger.error(`Failed to claim reward: ${claimResult.error}`);
+              logger.error(
+                `${colors.red}Failed to claim reward: ${claimResult.error}${colors.reset}`
+              );
             }
           }
         }
       } else {
         logger.error(
-          `Failed to fetch updated ${taskType} |${updatedTasksResult.error}`
+          `${colors.red}Failed to fetch updated ${taskType} |${updatedTasksResult.error}${colors.reset}`
         );
       }
     } else {
-      logger.warn(`No ${taskType} tasks available`);
+      logger.warn(
+        `${colors.yellow}No ${taskType} tasks available${colors.reset}`
+      );
     }
   }
 
@@ -466,42 +654,58 @@ class Clayton {
     );
     const firstName = userData.first_name;
 
-    logger.info(`Account ${accountIndex + 1} | ${firstName}`);
-    logger.info(`Logging into account`);
+    logger.info(
+      `${colors.cyan}Account ${accountIndex + 1} | ${
+        colors.bright
+      }${firstName}${colors.reset}`
+    );
+    logger.info(`${colors.cyan}Logging into account${colors.reset}`);
 
     const api = this.createApiClient(initData);
     const loginResult = await this.login(api);
     if (!loginResult.success) {
-      logger.error(`Login failed! ${loginResult.error}`);
+      logger.error(
+        `${colors.red}Login failed! ${loginResult.error}${colors.reset}`
+      );
       return;
     }
 
-    logger.info("Login successful!");
+    logger.info(`${colors.green}Login successful!${colors.reset}`);
     const userInfo = loginResult.data.user;
-    logger.info(`CL Balance: ${userInfo.tokens}`);
-    logger.info(`Tickets: ${userInfo.daily_attempts}`);
+    logger.info(
+      `${colors.cyan}CL Balance: ${colors.bright}${userInfo.tokens}${colors.reset}`
+    );
+    logger.info(
+      `${colors.cyan}Tickets: ${colors.bright}${userInfo.daily_attempts}${colors.reset}`
+    );
 
     // Daily Claim
     if (loginResult.data.dailyReward.can_claim_today) {
-      logger.info("Claiming daily reward");
+      logger.info(`${colors.cyan}Claiming daily reward${colors.reset}`);
       const claimResult = await this.claimDailyReward(api);
       if (
         claimResult.success &&
         claimResult.data.message === "daily reward claimed successfully"
       ) {
-        logger.info("Daily check-in successful!");
+        logger.info(`${colors.green}Daily check-in successful!${colors.reset}`);
       } else {
         logger.error(
-          `Unable to claim daily reward: ${
+          `${colors.red}Unable to claim daily reward: ${
             claimResult.error || "Unknown error"
-          }`
+          }${colors.reset}`
         );
         if (claimResult.details) {
-          logger.error(`Error details: ${JSON.stringify(claimResult.details)}`);
+          logger.error(
+            `${colors.red}Error details: ${JSON.stringify(
+              claimResult.details
+            )}${colors.reset}`
+          );
         }
       }
     } else {
-      logger.warn("You've already checked in today.");
+      logger.warn(
+        `${colors.yellow}You've already checked in today.${colors.reset}`
+      );
     }
 
     // Tasks
@@ -512,7 +716,7 @@ class Clayton {
     // Games
     if (userInfo.daily_attempts > 0) {
       logger.info(
-        `Starting Games (Available attempts: ${userInfo.daily_attempts})`
+        `${colors.cyan}Starting Games (Available attempts: ${colors.bright}${userInfo.daily_attempts}${colors.cyan})${colors.reset}`
       );
 
       const availableGames = ["1024", "Stack"];
@@ -520,7 +724,9 @@ class Clayton {
 
       for (let i = 1; i <= userInfo.daily_attempts; i++) {
         try {
-          logger.info(`Starting game ${i} of ${userInfo.daily_attempts}`);
+          logger.info(
+            `${colors.cyan}Starting game ${colors.bright}${i}${colors.cyan} of ${colors.bright}${userInfo.daily_attempts}${colors.reset}`
+          );
 
           let currentGame;
           do {
@@ -529,10 +735,14 @@ class Clayton {
           } while (lastGame === currentGame && userInfo.daily_attempts > 1);
 
           lastGame = currentGame;
-          logger.info(`Randomly selected game: ${currentGame}`);
+          logger.info(
+            `${colors.magenta}Randomly selected game: ${colors.bright}${currentGame}${colors.reset}`
+          );
 
           if (i > 1) {
-            logger.info("Waiting before starting next game...");
+            logger.info(
+              `${colors.yellow}Waiting before starting next game...${colors.reset}`
+            );
             await this.wait(5000);
           }
 
@@ -544,29 +754,35 @@ class Clayton {
           }
 
           if (gameResult.success) {
-            logger.info(`Game ${i} (${currentGame}) completed successfully`);
+            logger.info(
+              `${colors.green}Game ${i} (${currentGame}) completed successfully${colors.reset}`
+            );
             if (gameResult.data && gameResult.data.earn) {
               logger.info(
-                `Rewards earned: ${gameResult.data.earn} CL, ${gameResult.data.xp_earned} XP`
+                `${colors.cyan}Rewards earned: ${colors.bright}${gameResult.data.earn} CL${colors.cyan}, ${colors.bright}${gameResult.data.xp_earned} XP${colors.reset}`
               );
             }
           } else {
             logger.error(
-              `Failed to complete game ${i} (${currentGame}): ${gameResult.error}`
+              `${colors.red}Failed to complete game ${i} (${currentGame}): ${gameResult.error}${colors.reset}`
             );
             await this.wait(10000);
           }
 
           await this.wait(3000);
         } catch (error) {
-          logger.error(`Error during game ${i}: ${error.message}`);
+          logger.error(
+            `${colors.red}Error during game ${i}: ${error.message}${colors.reset}`
+          );
           await this.wait(10000);
         }
       }
 
-      logger.info("Finished all games");
+      logger.info(`${colors.cyan}Finished all games${colors.reset}`);
     } else {
-      logger.info(`No tickets left to play games`);
+      logger.info(
+        `${colors.yellow}No tickets left to play games${colors.reset}`
+      );
     }
   }
 
@@ -584,14 +800,17 @@ class Clayton {
         await this.wait(1000);
       }
 
-      logger.info("Waiting 24 hours before starting the next cycle");
+      logger.info(
+        `${colors.yellow}Waiting 24 hours before starting the next cycle${colors.reset}`
+      );
       await this.countdown(24 * 60 * 60);
     }
   }
 }
 
+// Run the script
 const client = new Clayton();
 client.main().catch((err) => {
-  logger.error(err.message);
+  logger.error(`${colors.red}${err.message}${colors.reset}`);
   process.exit(1);
 });

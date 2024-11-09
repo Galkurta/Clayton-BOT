@@ -1,30 +1,26 @@
 const figlet = require("figlet");
-
-const color = {
-  cyan: "\x1b[36m",
-  reset: "\x1b[0m",
-};
+const colors = require("./colors");
 
 function displayBanner() {
   const banner = figlet.textSync("Clayton BOT", {
-    font: "Standard",
+    font: "ANSI Shadow",
     horizontalLayout: "default",
     verticalLayout: "default",
-    width: 80,
+    width: 100,
   });
 
-  console.log(`${color.cyan}${banner}${color.reset}`);
+  console.log(`${colors.bannerText}${banner}${colors.reset}`);
   console.log(
-    `${color.cyan}===============================================${color.reset}`
+    `${colors.bannerBorder}===============================================${colors.reset}`
   );
   console.log(
-    `${color.cyan}GitHub  : https://github.com/Galkurta${color.reset}`
+    `${colors.bannerLinks}GitHub  : https://github.com/Galkurta${colors.reset}`
   );
   console.log(
-    `${color.cyan}Telegram: https://t.me/galkurtarchive${color.reset}`
+    `${colors.bannerLinks}Telegram: https://t.me/galkurtarchive${colors.reset}`
   );
   console.log(
-    `${color.cyan}===============================================\n${color.reset}`
+    `${colors.bannerBorder}===============================================\n${colors.reset}`
   );
 }
 
