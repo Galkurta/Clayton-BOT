@@ -61,11 +61,20 @@ class Clayton {
         return { success: true, data: response.data };
       } catch (error) {
         const statusCode = error.response?.status;
+        logger.error(`API Error: ${error.message}`);
+        logger.error(`Status Code: ${statusCode}`);
+        if (error.response?.data) {
+          logger.error(`Response Data: ${JSON.stringify(error.response.data)}`);
+        }
         if (attempt < retries - 1 && statusCode >= 500) {
           logger.warn(`Retrying request... Attempt ${attempt + 1}`);
           await this.wait(5000);
         } else {
-          return { success: false, error: error.message };
+          return {
+            success: false,
+            error: error.message,
+            details: error.response?.data,
+          };
         }
       }
     }
@@ -97,67 +106,294 @@ class Clayton {
 
   // API Methods
   async login(api) {
-    return this.safeRequest(api, "post", "/api/user/authorization");
+    return this.safeRequest(
+      api,
+      "post",
+      "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/user/authorization"
+    );
   }
 
   async claimDailyReward(api) {
-    return this.safeRequest(api, "post", "/api/user/daily-claim");
+    return this.safeRequest(
+      api,
+      "post",
+      "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/user/daily-claim"
+    );
   }
 
   async getPartnerTasks(api) {
-    return this.safeRequest(api, "get", "/api/tasks/partner-tasks");
+    return this.safeRequest(
+      api,
+      "get",
+      "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/tasks/partner-tasks"
+    );
   }
 
   async getDailyTasks(api) {
-    return this.safeRequest(api, "get", "/api/tasks/daily-tasks");
+    return this.safeRequest(
+      api,
+      "get",
+      "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/tasks/daily-tasks"
+    );
   }
 
   async getOtherTasks(api) {
-    return this.safeRequest(api, "get", "/api/tasks/default-tasks");
+    return this.safeRequest(
+      api,
+      "get",
+      "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/tasks/default-tasks"
+    );
   }
 
   async completeTask(api, taskId) {
-    return this.safeRequest(api, "post", `/api/tasks/complete`, {
-      task_id: taskId,
-    });
+    return this.safeRequest(
+      api,
+      "post",
+      `/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/tasks/complete`,
+      {
+        task_id: taskId,
+      }
+    );
   }
 
   async claimTaskReward(api, taskId) {
-    return this.safeRequest(api, "post", `/api/tasks/claim`, {
-      task_id: taskId,
-    });
+    return this.safeRequest(
+      api,
+      "post",
+      `/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/tasks/claim`,
+      {
+        task_id: taskId,
+      }
+    );
   }
 
-  // Game Methods
+  // Game 1024 Methods
   async playGame(api, gameName) {
-    await this.safeRequest(api, "post", "/api/game/start");
-    return this.playGameWithProgress(api, gameName);
-  }
-
-  async playGameWithProgress(api, gameName) {
-    const tileSequence = [2, 4, 8, 16, 32, 64, 128, 256];
-
-    for (let i = 0; i < tileSequence.length; i++) {
-      logger.info(`${gameName} game progress: ${i + 1}/${tileSequence.length}`);
-
-      await this.wait(this.getRandomNumber(3000, 7000));
-      const saveResult = await this.safeRequest(
+    try {
+      const startResult = await this.safeRequest(
         api,
         "post",
-        "/api/game/save-tile",
+        "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/game/start"
+      );
+
+      if (!startResult.success || !startResult.data.session_id) {
+        logger.error(
+          `Failed to start ${gameName} game: ${
+            startResult.error || "No session ID received"
+          }`
+        );
+        return startResult;
+      }
+
+      const sessionId = startResult.data.session_id;
+      logger.info(
+        `${gameName} game started successfully with session: ${sessionId}`
+      );
+
+      await this.wait(2000);
+
+      const gameResult = await this.playGameWithProgress(
+        api,
+        gameName,
+        sessionId
+      );
+
+      if (!gameResult.success) {
+        logger.error(`Game session ${sessionId} failed: ${gameResult.error}`);
+        return gameResult;
+      }
+
+      return gameResult;
+    } catch (error) {
+      logger.error(`Unexpected error in playGame: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async playGameWithProgress(api, gameName, sessionId) {
+    try {
+      const tileSequence = [2, 4, 8, 16, 32, 64, 128, 256];
+      let lastSuccessfulTile = 0;
+
+      for (let i = 0; i < tileSequence.length; i++) {
+        const currentTile = tileSequence[i];
+        logger.info(
+          `${gameName} game progress: ${i + 1}/${tileSequence.length}`
+        );
+
+        await this.wait(this.getRandomNumber(3000, 5000));
+
+        const saveResult = await this.safeRequest(
+          api,
+          "post",
+          "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/game/save-tile",
+          {
+            session_id: sessionId,
+            maxTile: currentTile,
+          }
+        );
+
+        if (saveResult.success) {
+          logger.info(`Tile ${currentTile} saved successfully`);
+          lastSuccessfulTile = currentTile;
+        } else {
+          logger.error(
+            `Failed to save tile ${currentTile} - Error: ${saveResult.error}`
+          );
+          logger.error(`Last successful tile was: ${lastSuccessfulTile}`);
+          break;
+        }
+      }
+
+      await this.wait(2000);
+
+      logger.info(
+        `${gameName} game finished with session: ${sessionId}, maxTile: ${lastSuccessfulTile}`
+      );
+      const gameOverResult = await this.safeRequest(
+        api,
+        "post",
+        "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/game/over",
         {
-          maxTile: tileSequence[i],
+          session_id: sessionId,
+          multiplier: 1,
+          maxTile: lastSuccessfulTile,
         }
       );
-      if (saveResult.success) {
-        logger.info(`Tile saved: ${tileSequence[i]}`);
-      } else {
-        logger.error(`Failed to save tile: ${tileSequence[i]}`);
-      }
-    }
 
-    logger.info(`${gameName} game finished!`);
-    return this.safeRequest(api, "post", "/api/game/over", { multiplier: 1 });
+      if (!gameOverResult.success) {
+        logger.error(
+          `Failed to properly end game session ${sessionId}: ${gameOverResult.error}`
+        );
+      }
+
+      if (gameOverResult.data) {
+        const { earn, xp_earned, level, token_reward, attempts_reward } =
+          gameOverResult.data;
+        logger.info(`Game Rewards:`);
+        logger.info(`> Earnings: ${earn || 0} CL`);
+        logger.info(`> XP Earned: ${xp_earned || 0}`);
+        logger.info(`> Level: ${level || 0}`);
+        logger.info(`> Token Reward: ${token_reward || 0}`);
+        logger.info(`> Attempts Reward: ${attempts_reward || 0}`);
+      }
+
+      return gameOverResult;
+    } catch (error) {
+      logger.error(
+        `Unexpected error in playGameWithProgress: ${error.message}`
+      );
+      return { success: false, error: error.message };
+    }
+  }
+
+  // Stack Game Methods
+  async playStackGame(api, gameName) {
+    try {
+      const startResult = await this.safeRequest(
+        api,
+        "post",
+        "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/stack/st-game"
+      );
+
+      if (!startResult.success || !startResult.data.session_id) {
+        logger.error(
+          `Failed to start ${gameName} game: ${
+            startResult.error || "No session ID received"
+          }`
+        );
+        return startResult;
+      }
+
+      const sessionId = startResult.data.session_id;
+      logger.info(
+        `${gameName} game started successfully with session: ${sessionId}`
+      );
+
+      await this.wait(2000);
+
+      return this.playStackGameWithProgress(api, gameName);
+    } catch (error) {
+      logger.error(`Unexpected error in playStackGame: ${error.message}`);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async playStackGameWithProgress(api, gameName) {
+    try {
+      const scoreSequence = [10, 20, 30, 40, 50, 60, 70, 80, 90];
+      let lastSuccessfulScore = 0;
+
+      for (let i = 0; i < scoreSequence.length; i++) {
+        const currentScore = scoreSequence[i];
+        logger.info(
+          `${gameName} game progress: ${i + 1}/${
+            scoreSequence.length
+          } (Score: ${currentScore})`
+        );
+
+        await this.wait(this.getRandomNumber(3000, 5000));
+
+        const updateResult = await this.safeRequest(
+          api,
+          "post",
+          "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/stack/update-game",
+          {
+            score: currentScore,
+          }
+        );
+
+        if (updateResult.success) {
+          logger.info(`Score ${currentScore} updated successfully`);
+          lastSuccessfulScore = currentScore;
+        } else {
+          logger.error(
+            `Failed to update score ${currentScore} - Error: ${updateResult.error}`
+          );
+          logger.error(`Last successful score was: ${lastSuccessfulScore}`);
+          break;
+        }
+      }
+
+      await this.wait(2000);
+
+      logger.info(
+        `${gameName} game finished with final score: ${lastSuccessfulScore}`
+      );
+      const endGameResult = await this.safeRequest(
+        api,
+        "post",
+        "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/stack/en-game",
+        {
+          score: lastSuccessfulScore,
+          multiplier: 1,
+        }
+      );
+
+      if (!endGameResult.success) {
+        logger.error(`Failed to end Stack game: ${endGameResult.error}`);
+        return endGameResult;
+      }
+
+      // Log rewards
+      if (endGameResult.data) {
+        const { earn, xp_earned, level, token_reward, attempts_reward } =
+          endGameResult.data;
+        logger.info(`Stack Game Rewards:`);
+        logger.info(`> Earnings: ${earn || 0} CL`);
+        logger.info(`> XP Earned: ${xp_earned || 0}`);
+        logger.info(`> Level: ${level || 0}`);
+        logger.info(`> Token Reward: ${token_reward || 0}`);
+        logger.info(`> Attempts Reward: ${attempts_reward || 0}`);
+      }
+
+      return endGameResult;
+    } catch (error) {
+      logger.error(
+        `Unexpected error in playStackGameWithProgress: ${error.message}`
+      );
+      return { success: false, error: error.message };
+    }
   }
 
   // Task Methods
@@ -215,7 +451,7 @@ class Clayton {
         }
       } else {
         logger.error(
-          `Failed to fetch updated ${taskType} | ${updatedTasksResult.error}`
+          `Failed to fetch updated ${taskType} |${updatedTasksResult.error}`
         );
       }
     } else {
@@ -260,6 +496,9 @@ class Clayton {
             claimResult.error || "Unknown error"
           }`
         );
+        if (claimResult.details) {
+          logger.error(`Error details: ${JSON.stringify(claimResult.details)}`);
+        }
       }
     } else {
       logger.warn("You've already checked in today.");
@@ -272,15 +511,60 @@ class Clayton {
 
     // Games
     if (userInfo.daily_attempts > 0) {
+      logger.info(
+        `Starting Games (Available attempts: ${userInfo.daily_attempts})`
+      );
+
+      const availableGames = ["1024", "Stack"];
+      let lastGame = null;
+
       for (let i = 1; i <= userInfo.daily_attempts; i++) {
-        logger.info(`Playing game ${i} of ${userInfo.daily_attempts}`);
-        const gameResult = await this.playGame(api, "1024");
-        if (gameResult.success) {
-          logger.info(`Game ${i} completed successfully`);
-        } else {
-          logger.error(`Failed to complete game ${i}: ${gameResult.error}`);
+        try {
+          logger.info(`Starting game ${i} of ${userInfo.daily_attempts}`);
+
+          let currentGame;
+          do {
+            currentGame =
+              availableGames[Math.floor(Math.random() * availableGames.length)];
+          } while (lastGame === currentGame && userInfo.daily_attempts > 1);
+
+          lastGame = currentGame;
+          logger.info(`Randomly selected game: ${currentGame}`);
+
+          if (i > 1) {
+            logger.info("Waiting before starting next game...");
+            await this.wait(5000);
+          }
+
+          let gameResult;
+          if (currentGame === "1024") {
+            gameResult = await this.playGame(api, currentGame);
+          } else {
+            gameResult = await this.playStackGame(api, currentGame);
+          }
+
+          if (gameResult.success) {
+            logger.info(`Game ${i} (${currentGame}) completed successfully`);
+            if (gameResult.data && gameResult.data.earn) {
+              logger.info(
+                `Rewards earned: ${gameResult.data.earn} CL, ${gameResult.data.xp_earned} XP`
+              );
+            }
+          } else {
+            logger.error(
+              `Failed to complete game ${i} (${currentGame}): ${gameResult.error}`
+            );
+            await this.wait(10000);
+          }
+
+          await this.wait(3000);
+        } catch (error) {
+          logger.error(`Error during game ${i}: ${error.message}`);
+          await this.wait(10000);
         }
       }
+
+      logger.info("Finished all games");
     } else {
       logger.info(`No tickets left to play games`);
     }
@@ -300,14 +584,12 @@ class Clayton {
         await this.wait(1000);
       }
 
-      // Wait for 24 hours before starting the next cycle
       logger.info("Waiting 24 hours before starting the next cycle");
       await this.countdown(24 * 60 * 60);
     }
   }
 }
 
-// Run the script
 const client = new Clayton();
 client.main().catch((err) => {
   logger.error(err.message);
