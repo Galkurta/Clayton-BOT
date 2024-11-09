@@ -62,22 +62,21 @@ class Clayton {
         return { success: true, data: response.data };
       } catch (error) {
         const statusCode = error.response?.status;
-        logger.error(`${colors.red}API Error: ${error.message}${colors.reset}`);
-        logger.error(`${colors.red}Status Code: ${statusCode}${colors.reset}`);
-        if (error.response?.data) {
-          logger.error(
-            `${colors.red}Response Data: ${JSON.stringify(
-              error.response.data
-            )}${colors.reset}`
-          );
-        }
-        if (attempt < retries - 1 && statusCode >= 500) {
+        if (attempt < retries - 1) {
           logger.warn(
-            `${colors.yellow}Retrying request... Attempt ${attempt + 1}${
-              colors.reset
-            }`
+            `${colors.yellow}Request failed, attempt ${
+              attempt + 1
+            }/${retries}. Status: ${statusCode}${colors.reset}`
           );
-          await this.wait(5000);
+          logger.debug(`${colors.gray}Error: ${error.message}${colors.reset}`);
+          if (error.response?.data) {
+            logger.debug(
+              `${colors.gray}Response: ${JSON.stringify(error.response.data)}${
+                colors.reset
+              }`
+            );
+          }
+          await this.wait(5000 * (attempt + 1)); // Increasing delay with each attempt
         } else {
           return {
             success: false,
@@ -179,6 +178,9 @@ class Clayton {
   // Game 1024 Methods
   async playGame(api, gameName) {
     try {
+      // Wait before starting new game
+      await this.wait(5000);
+
       const startResult = await this.safeRequest(
         api,
         "post",
@@ -199,7 +201,8 @@ class Clayton {
         `${colors.green}${gameName} game started successfully with session: ${colors.bright}${sessionId}${colors.reset}`
       );
 
-      await this.wait(2000);
+      // Wait after game starts
+      await this.wait(3000);
 
       const gameResult = await this.playGameWithProgress(
         api,
@@ -207,12 +210,8 @@ class Clayton {
         sessionId
       );
 
-      if (!gameResult.success) {
-        logger.error(
-          `${colors.red}Game session ${sessionId} failed: ${gameResult.error}${colors.reset}`
-        );
-        return gameResult;
-      }
+      // Additional wait after game completes
+      await this.wait(5000);
 
       return gameResult;
     } catch (error) {
@@ -227,7 +226,7 @@ class Clayton {
     try {
       const tileSequence = [2, 4, 8, 16, 32, 64, 128, 256];
       let lastSuccessfulTile = 0;
-      let lastSuccessfulTime = 0;
+      const baseDelay = 5000;
 
       for (let i = 0; i < tileSequence.length; i++) {
         const currentTile = tileSequence[i];
@@ -237,100 +236,140 @@ class Clayton {
           }${colors.reset}`
         );
 
-        const currentTime = Date.now();
-        if (lastSuccessfulTime > 0) {
-          const timeSinceLastSuccess = currentTime - lastSuccessfulTime;
-          if (timeSinceLastSuccess < 5000) {
-            const additionalDelay = 5000 - timeSinceLastSuccess;
-            await this.wait(additionalDelay);
+        // Extended delay between tile saves
+        await this.wait(this.getRandomNumber(6000, 10000));
+
+        let saveTileSuccess = false;
+        let saveTileAttempts = 0;
+
+        while (!saveTileSuccess && saveTileAttempts < 3) {
+          try {
+            const saveResult = await this.safeRequest(
+              api,
+              "post",
+              "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/game/save-tile",
+              {
+                session_id: sessionId,
+                maxTile: currentTile,
+              }
+            );
+
+            if (saveResult.success) {
+              logger.info(
+                `${colors.green}Tile ${currentTile} saved successfully${colors.reset}`
+              );
+              lastSuccessfulTile = currentTile;
+              saveTileSuccess = true;
+              await this.wait(1000); // Small delay after successful save
+            } else {
+              saveTileAttempts++;
+              const errorMessage =
+                saveResult.details?.error || saveResult.error;
+
+              if (errorMessage?.includes("SQLSTATE 42P10")) {
+                const conflictDelay = baseDelay * (saveTileAttempts + 1);
+                logger.warn(
+                  `${colors.yellow}Database conflict detected. Waiting ${
+                    conflictDelay / 1000
+                  }s before retry... (Attempt ${saveTileAttempts}/3)${
+                    colors.reset
+                  }`
+                );
+                await this.wait(conflictDelay);
+                continue;
+              }
+
+              logger.error(
+                `${colors.red}Failed to save tile ${currentTile} - Error: ${errorMessage}${colors.reset}`
+              );
+              await this.wait(baseDelay);
+            }
+          } catch (error) {
+            saveTileAttempts++;
+            logger.error(
+              `${colors.red}Unexpected error saving tile: ${error.message}${colors.reset}`
+            );
+            await this.wait(baseDelay);
           }
         }
 
-        // Random delay between saves
-        await this.wait(this.getRandomNumber(4000, 7000));
-
-        const saveResult = await this.safeRequest(
-          api,
-          "post",
-          "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/game/save-tile",
-          {
-            session_id: sessionId,
-            maxTile: currentTile,
-          }
-        );
-
-        if (saveResult.success) {
-          logger.info(
-            `${colors.green}Tile ${currentTile} saved successfully${colors.reset}`
-          );
-          lastSuccessfulTile = currentTile;
-          lastSuccessfulTime = Date.now();
-        } else {
-          const errorMessage = saveResult.details?.error || saveResult.error;
-          if (errorMessage?.includes("SQLSTATE 42P10")) {
-            logger.error(
-              `${colors.red}Database conflict detected. Waiting for resolution...${colors.reset}`
-            );
-            await this.wait(10000); // Wait 10 seconds on database conflict
-            continue; // Try the same tile again
-          }
-
+        if (!saveTileSuccess) {
           logger.error(
-            `${colors.red}Failed to save tile ${currentTile} - Error: ${errorMessage}${colors.reset}`
+            `${colors.red}Failed to save tile after all attempts. Moving to end game.${colors.reset}`
           );
-          logger.error(
-            `${colors.red}Last successful tile was: ${lastSuccessfulTile}${colors.reset}`
-          );
-
-          // On error, wait longer before trying next tile
-          await this.wait(8000);
-          continue; // Try to continue with next tile instead of breaking
+          break;
         }
       }
 
-      // Additional delay before ending game
-      await this.wait(5000);
+      // Extended delay before ending game
+      await this.wait(8000);
 
-      // Try to end game multiple times if needed
+      // End game with multiple attempts
+      let endGameSuccess = false;
       let endGameAttempts = 0;
       let gameOverResult;
 
-      while (endGameAttempts < 3) {
-        logger.info(
-          `${colors.cyan}${gameName} game finished with session: ${sessionId}, maxTile: ${lastSuccessfulTile}${colors.reset}`
-        );
+      while (!endGameSuccess && endGameAttempts < 5) {
+        try {
+          logger.info(
+            `${colors.cyan}${gameName} game finished with session: ${sessionId}, maxTile: ${lastSuccessfulTile}${colors.reset}`
+          );
 
-        gameOverResult = await this.safeRequest(
-          api,
-          "post",
-          "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/game/over",
-          {
-            session_id: sessionId,
-            multiplier: 1,
-            maxTile: lastSuccessfulTile,
+          await this.wait(baseDelay * (endGameAttempts + 1));
+
+          gameOverResult = await this.safeRequest(
+            api,
+            "post",
+            "/api/cc82f330-6a6d-4deb-a15b-6a332a67ffa7/game/over",
+            {
+              session_id: sessionId,
+              multiplier: 1,
+              maxTile: lastSuccessfulTile,
+            }
+          );
+
+          if (gameOverResult.success) {
+            endGameSuccess = true;
+            break;
           }
-        );
 
-        if (gameOverResult.success) {
-          break;
+          endGameAttempts++;
+          const errorMessage =
+            gameOverResult.details?.error || gameOverResult.error;
+
+          if (errorMessage?.includes("SQLSTATE 42P10")) {
+            const endGameDelay = baseDelay * (endGameAttempts + 2);
+            logger.warn(
+              `${
+                colors.yellow
+              }Database conflict detected on end game. Waiting ${
+                endGameDelay / 1000
+              }s before retry... (Attempt ${endGameAttempts}/5)${colors.reset}`
+            );
+            await this.wait(endGameDelay);
+          } else {
+            logger.error(
+              `${colors.red}Failed to end game - Error: ${errorMessage} (Attempt ${endGameAttempts}/5)${colors.reset}`
+            );
+            await this.wait(baseDelay * 2);
+          }
+        } catch (error) {
+          endGameAttempts++;
+          logger.error(
+            `${colors.red}Unexpected error ending game: ${error.message} (Attempt ${endGameAttempts}/5)${colors.reset}`
+          );
+          await this.wait(baseDelay * 2);
         }
-
-        logger.warn(
-          `${colors.yellow}Failed to end game, attempt ${
-            endGameAttempts + 1
-          }/3. Waiting before retry...${colors.reset}`
-        );
-        await this.wait(8000);
-        endGameAttempts++;
       }
 
-      if (!gameOverResult.success) {
-        logger.error(
-          `${colors.red}Failed to properly end game session after all attempts${colors.reset}`
-        );
-        return gameOverResult;
+      if (!endGameSuccess) {
+        return {
+          success: false,
+          error: "Failed to end game after multiple attempts",
+        };
       }
 
+      // Log rewards only if game ended successfully
       if (gameOverResult.data) {
         const { earn, xp_earned, level, token_reward, attempts_reward } =
           gameOverResult.data;
@@ -372,6 +411,9 @@ class Clayton {
   // Stack Game Methods
   async playStackGame(api, gameName) {
     try {
+      // Wait before starting new game
+      await this.wait(5000);
+
       const startResult = await this.safeRequest(
         api,
         "post",
@@ -392,7 +434,7 @@ class Clayton {
         `${colors.green}${gameName} game started successfully with session: ${colors.bright}${sessionId}${colors.reset}`
       );
 
-      await this.wait(3000); // Wait before starting game progress
+      await this.wait(3000);
 
       return this.playStackGameWithProgress(api, gameName);
     } catch (error) {
@@ -407,7 +449,7 @@ class Clayton {
     try {
       const scoreSequence = [10, 20, 30, 40, 50, 60, 70, 80, 90];
       let lastSuccessfulScore = 0;
-      let lastSuccessfulTime = 0;
+      const baseDelay = 5000;
 
       for (let i = 0; i < scoreSequence.length; i++) {
         const currentScore = scoreSequence[i];
@@ -419,17 +461,8 @@ class Clayton {
           })${colors.reset}`
         );
 
-        const currentTime = Date.now();
-        if (lastSuccessfulTime > 0) {
-          const timeSinceLastSuccess = currentTime - lastSuccessfulTime;
-          if (timeSinceLastSuccess < 5000) {
-            const additionalDelay = 5000 - timeSinceLastSuccess;
-            await this.wait(additionalDelay);
-          }
-        }
-
-        // Random delay between score updates
-        await this.wait(this.getRandomNumber(4000, 7000));
+        // Extended delay between score updates
+        await this.wait(this.getRandomNumber(6000, 10000));
 
         let updateSuccess = false;
         let updateAttempts = 0;
@@ -449,18 +482,21 @@ class Clayton {
               `${colors.green}Score ${currentScore} updated successfully${colors.reset}`
             );
             lastSuccessfulScore = currentScore;
-            lastSuccessfulTime = Date.now();
             updateSuccess = true;
+            await this.wait(1000); // Small delay after successful update
           } else {
             updateAttempts++;
             const errorMessage =
               updateResult.details?.error || updateResult.error;
 
             if (errorMessage?.includes("SQLSTATE 42P10")) {
+              const conflictDelay = baseDelay * (updateAttempts + 1);
               logger.warn(
-                `${colors.yellow}Database conflict detected. Waiting before retry... (Attempt ${updateAttempts}/3)${colors.reset}`
+                `${colors.yellow}Database conflict detected. Waiting ${
+                  conflictDelay / 1000
+                }s before retry... (Attempt ${updateAttempts}/3)${colors.reset}`
               );
-              await this.wait(8000); // Longer wait on database conflict
+              await this.wait(conflictDelay);
               continue;
             }
 
@@ -469,10 +505,7 @@ class Clayton {
             );
 
             if (updateAttempts < 3) {
-              logger.info(
-                `${colors.yellow}Retrying after delay...${colors.reset}`
-              );
-              await this.wait(6000);
+              await this.wait(baseDelay);
             } else {
               logger.error(
                 `${colors.red}Last successful score was: ${lastSuccessfulScore}${colors.reset}`
@@ -490,14 +523,14 @@ class Clayton {
         }
       }
 
-      // Additional delay before ending game
-      await this.wait(5000);
+      // Extended delay before ending game
+      await this.wait(8000);
 
-      // Try to end game multiple times if needed
+      // Try to end game multiple times
       let endGameAttempts = 0;
       let endGameResult;
 
-      while (endGameAttempts < 3) {
+      while (endGameAttempts < 5) {
         logger.info(
           `${colors.cyan}${gameName} game finished with final score: ${colors.bright}${lastSuccessfulScore}${colors.reset}`
         );
@@ -517,17 +550,33 @@ class Clayton {
         }
 
         endGameAttempts++;
-        logger.warn(
-          `${colors.yellow}Failed to end game, attempt ${endGameAttempts}/3. Waiting before retry...${colors.reset}`
-        );
-        await this.wait(8000);
+        const errorMessage =
+          endGameResult.details?.error || endGameResult.error;
+
+        if (errorMessage?.includes("SQLSTATE 42P10")) {
+          const endGameDelay = baseDelay * (endGameAttempts + 2);
+          logger.warn(
+            `${colors.yellow}Database conflict detected on end game. Waiting ${
+              endGameDelay / 1000
+            }s before retry... (Attempt ${endGameAttempts}/5)${colors.reset}`
+          );
+          await this.wait(endGameDelay);
+        } else {
+          logger.warn(
+            `${colors.yellow}Failed to end game, attempt ${endGameAttempts}/5. Waiting before retry...${colors.reset}`
+          );
+          await this.wait(baseDelay * 2);
+        }
       }
 
-      if (!endGameResult.success) {
+      if (!endGameResult?.success) {
         logger.error(
-          `${colors.red}Failed to end Stack game after all attempts: ${endGameResult.error}${colors.reset}`
+          `${colors.red}Failed to end Stack game after all attempts${colors.reset}`
         );
-        return endGameResult;
+        return {
+          success: false,
+          error: "Failed to end game after multiple attempts",
+        };
       }
 
       if (endGameResult.data) {
@@ -721,6 +770,8 @@ class Clayton {
 
       const availableGames = ["1024", "Stack"];
       let lastGame = null;
+      let lastGameEndTime = 0;
+      const minimumGameInterval = 20000;
 
       for (let i = 1; i <= userInfo.daily_attempts; i++) {
         try {
@@ -729,21 +780,32 @@ class Clayton {
           );
 
           let currentGame;
-          do {
-            currentGame =
-              availableGames[Math.floor(Math.random() * availableGames.length)];
-          } while (lastGame === currentGame && userInfo.daily_attempts > 1);
+          const currentTime = Date.now();
+
+          if (lastGame && currentTime - lastGameEndTime < minimumGameInterval) {
+            currentGame = lastGame === "1024" ? "Stack" : "1024";
+            logger.info(
+              `${colors.yellow}Selecting different game due to recent similar game${colors.reset}`
+            );
+          } else {
+            do {
+              currentGame =
+                availableGames[
+                  Math.floor(Math.random() * availableGames.length)
+                ];
+            } while (lastGame === currentGame && userInfo.daily_attempts > 1);
+          }
 
           lastGame = currentGame;
           logger.info(
-            `${colors.magenta}Randomly selected game: ${colors.bright}${currentGame}${colors.reset}`
+            `${colors.magenta}Selected game: ${colors.bright}${currentGame}${colors.reset}`
           );
 
           if (i > 1) {
             logger.info(
-              `${colors.yellow}Waiting before starting next game...${colors.reset}`
+              `${colors.yellow}Cooling down before starting next game...${colors.reset}`
             );
-            await this.wait(5000);
+            await this.wait(15000);
           }
 
           let gameResult;
@@ -752,6 +814,8 @@ class Clayton {
           } else {
             gameResult = await this.playStackGame(api, currentGame);
           }
+
+          lastGameEndTime = Date.now();
 
           if (gameResult.success) {
             logger.info(
@@ -762,19 +826,19 @@ class Clayton {
                 `${colors.cyan}Rewards earned: ${colors.bright}${gameResult.data.earn} CL${colors.cyan}, ${colors.bright}${gameResult.data.xp_earned} XP${colors.reset}`
               );
             }
+
+            await this.wait(8000);
           } else {
             logger.error(
               `${colors.red}Failed to complete game ${i} (${currentGame}): ${gameResult.error}${colors.reset}`
             );
-            await this.wait(10000);
+            await this.wait(20000);
           }
-
-          await this.wait(3000);
         } catch (error) {
           logger.error(
             `${colors.red}Error during game ${i}: ${error.message}${colors.reset}`
           );
-          await this.wait(10000);
+          await this.wait(20000);
         }
       }
 
