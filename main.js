@@ -204,11 +204,35 @@ class Clayton {
   }
 
   async claimDailyReward(api) {
-    return this.safeRequest(
-      api,
-      "post",
-      this.getApiUrl(Clayton.API_ENDPOINTS.DAILY_CLAIM)
-    );
+    try {
+      const result = await this.safeRequest(
+        api,
+        "post",
+        this.getApiUrl(Clayton.API_ENDPOINTS.DAILY_CLAIM)
+      );
+
+      if (result.success && result.data) {
+        // Add more specific response validation
+        if (typeof result.data === "object") {
+          if (result.data.message) {
+            result.data.message = result.data.message.toLowerCase();
+          }
+          return result;
+        }
+      }
+
+      return {
+        success: false,
+        error: "Invalid response format",
+        details: result.data,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error.message,
+        details: error.response?.data,
+      };
+    }
   }
 
   async getPartnerTasks(api) {
@@ -651,32 +675,83 @@ class Clayton {
   }
 
   async handleDailyReward(api, dailyReward) {
-    if (!dailyReward.can_claim_today) {
-      logger.warn(
-        `${colors.yellow}Daily reward already claimed${colors.reset}`
-      );
-      return;
-    }
+    try {
+      if (!dailyReward.can_claim_today) {
+        logger.warn(
+          `${colors.yellow}Daily reward already claimed${colors.reset}`
+        );
+        return;
+      }
 
-    logger.info(`${colors.cyan}Claiming daily reward${colors.reset}`);
-    const claimResult = await this.claimDailyReward(api);
-    this.logDailyRewardResult(claimResult);
+      logger.info(`${colors.cyan}Claiming daily reward...${colors.reset}`);
+      let claimAttempts = 0;
+      const maxAttempts = 3;
+
+      while (claimAttempts < maxAttempts) {
+        const claimResult = await this.claimDailyReward(api);
+
+        if (claimResult.success) {
+          logger.info(
+            `${colors.green}Daily reward claimed successfully!${colors.reset}`
+          );
+          if (claimResult.data.tokens) {
+            logger.info(
+              `${colors.green}New balance: ${colors.bright}${claimResult.data.tokens} CL${colors.reset}`
+            );
+          }
+          return;
+        }
+
+        claimAttempts++;
+        const errorMessage =
+          claimResult.details?.error || claimResult.error || "Unknown error";
+
+        if (claimAttempts < maxAttempts) {
+          logger.warn(
+            `${colors.yellow}Failed to claim daily reward (Attempt ${claimAttempts}/${maxAttempts}): ${errorMessage}${colors.reset}`
+          );
+          await this.wait(5000);
+        } else {
+          logger.error(
+            `${colors.red}Failed to claim daily reward after ${maxAttempts} attempts: ${errorMessage}${colors.reset}`
+          );
+        }
+      }
+    } catch (error) {
+      logger.error(
+        `${colors.red}Error in handleDailyReward: ${error.message}${colors.reset}`
+      );
+    }
   }
 
   logDailyRewardResult(result) {
-    if (
-      result.success &&
-      result.data.message === "daily reward claimed successfully"
-    ) {
-      logger.info(
-        `${colors.green}Daily reward claimed successfully!${colors.reset}`
-      );
+    if (result.success) {
+      if (result.data.message === "daily reward claimed successfully") {
+        logger.info(
+          `${colors.green}Daily reward claimed successfully!${colors.reset}`
+        );
+        if (result.data.tokens) {
+          logger.info(
+            `${colors.green}New balance: ${colors.bright}${result.data.tokens} CL${colors.reset}`
+          );
+        }
+      } else {
+        logger.info(`${colors.green}${result.data.message}${colors.reset}`);
+      }
     } else {
+      const errorMessage =
+        result.details?.error || result.error || "Unknown error";
       logger.error(
-        `${colors.red}Failed to claim daily reward: ${
-          result.error || "Unknown error"
-        }${colors.reset}`
+        `${colors.red}Failed to claim daily reward: ${errorMessage}${colors.reset}`
       );
+
+      if (result.details) {
+        logger.debug(
+          `${colors.gray}Error details: ${JSON.stringify(result.details)}${
+            colors.reset
+          }`
+        );
+      }
     }
   }
 
